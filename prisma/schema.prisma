@@ -1,0 +1,179 @@
+// Prisma Schema for IdeaSprint (Idea Marketplace Platform)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  CREATOR
+  BUYER
+  ADMIN
+}
+
+enum IdeaType {
+  BUSINESS_BLUEPRINT
+  ENTERTAINMENT_SHOW
+  TECH_INNOVATION
+  WORLD_IMPACT
+  CREATIVE_CAMPAIGN
+}
+
+enum SaleModel {
+  NON_EXCLUSIVE // Multiple buyers can unlock at set price ($29-$299)
+  EXCLUSIVE     // Single buyer acquires 100% rights ($1,000+)
+}
+
+enum IdeaStatus {
+  DRAFT
+  UNDER_REVIEW
+  ACTIVE
+  SOLD_OUT
+  REJECTED
+}
+
+enum EscrowStatus {
+  HELD
+  RELEASED_TO_SELLER
+  REFUNDED_TO_BUYER
+  IN_DISPUTE
+}
+
+model User {
+  id                String       @id @default(cuid())
+  email             String       @unique
+  name              String?
+  avatarUrl         String?
+  role              Role         @default(USER)
+  stripeCustomerId  String?      @unique
+  stripeConnectId   String?      @unique // Connected account ID for payouts
+  stripePayoutsOn   Boolean      @default(false)
+  isProSubscriber   Boolean      @default(false)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  ideas             Idea[]       @relation("CreatorIdeas")
+  purchases         Purchase[]   @relation("BuyerPurchases")
+  bountiesPosted    Bounty[]     @relation("BountyPoster")
+  bountySubmissions BountySubmission[]
+  reviewsWritten    Review[]
+}
+
+model Idea {
+  id                  String       @id @default(cuid())
+  creatorId           String
+  creator             User         @relation("CreatorIdeas", fields: [creatorId], references: [id], onDelete: Cascade)
+  
+  title               String
+  slug                String       @unique
+  oneLineHook         String
+  category            IdeaType
+  saleModel           SaleModel    @default(NON_EXCLUSIVE)
+  
+  // Public Teaser (Visible to everyone)
+  problemStatement    String       @db.Text
+  targetMarket        String       @db.Text
+  whyNow              String       @db.Text
+  estimatedLaunchCost String?
+  tractionSignals     String?
+  
+  // Protected Payload (Strictly gated behind purchase)
+  executionPlan       String       @db.Text
+  supplierVendorList  String?      @db.Text
+  financialModel      String?      @db.Text
+  mediaScript         String?      @db.Text
+  assetFileUrls       String[]     // Secure S3 download paths
+  
+  priceCents          Int          // In USD cents ($50.00 = 5000)
+  status              IdeaStatus   @default(ACTIVE)
+  aiCompletenessScore Int?         // 0-100 score computed during review
+  viewCount           Int          @default(0)
+  
+  purchases           Purchase[]
+  reviews             Review[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([category])
+  @@index([status])
+  @@index([priceCents])
+}
+
+model Purchase {
+  id                String       @id @default(cuid())
+  ideaId            String
+  idea              Idea         @relation(fields: [ideaId], references: [id])
+  buyerId           String
+  buyer             User         @relation("BuyerPurchases", fields: [buyerId], references: [id])
+  
+  amountCents       Int
+  platformFeeCents  Int
+  sellerAmountCents Int
+  stripePaymentId   String       @unique
+  
+  escrowStatus      EscrowStatus @default(HELD)
+  escrowReleaseAt   DateTime
+  clickwrapAgreedAt DateTime     @default(now())
+  ipAssignmentHash  String?      // Digital signature hash proving IP transfer
+  
+  createdAt         DateTime     @default(now())
+
+  @@index([buyerId])
+  @@index([ideaId])
+}
+
+model Bounty {
+  id                 String       @id @default(cuid())
+  posterId           String
+  poster             User         @relation("BountyPoster", fields: [posterId], references: [id])
+  
+  title              String
+  slug               String       @unique
+  description        String       @db.Text
+  prizeCents         Int
+  category           IdeaType     @default(BUSINESS_BLUEPRINT)
+  deadline           DateTime
+  isActive           Boolean      @default(true)
+  winnerSubmissionId String?      @unique
+
+  submissions        BountySubmission[]
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([isActive])
+}
+
+model BountySubmission {
+  id             String    @id @default(cuid())
+  bountyId       String
+  bounty         Bounty    @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  solverId       String
+  solver         User      @relation(fields: [solverId], references: [id])
+  
+  proposalText   String    @db.Text
+  attachmentUrls String[]
+  isWinner       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  @@index([bountyId])
+  @@index([solverId])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  ideaId    String
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User     @relation(fields: [buyerId], references: [id])
+  
+  rating    Int      // 1 to 5 stars
+  feedback  String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([ideaId])
+}
